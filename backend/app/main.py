@@ -91,6 +91,11 @@ class ReviewOut(BaseModel):
     meeting_link: str | None
     feedback_status: str
 
+class ReviewCreate(BaseModel):
+    candidate_id: str = Field(pattern=r"^INT[0-9]{3}$")
+    scheduled_at: datetime
+    reviewer: str | None = None
+
 class ProjectOut(BaseModel):
     id: int
     name: str
@@ -229,6 +234,18 @@ def update_candidate(candidate_id: str, payload: CandidateCreate, db: Session = 
 @app.get("/api/reviews", response_model=list[ReviewOut])
 def reviews(db: Session = Depends(get_db)) -> list[ReviewOut]:
     return [ReviewOut(id=r.id, candidate_id=r.candidate.candidate_id, full_name=r.candidate.full_name, project=r.candidate.project.name, scheduled_at=r.scheduled_at, status=r.status, reviewer=r.reviewer, meeting_link=r.meeting_link, feedback_status=r.feedback_status) for r in db.scalars(select(Review).order_by(Review.scheduled_at)).all()]
+
+@app.post("/api/reviews", response_model=ReviewOut, status_code=201)
+def create_review(payload: ReviewCreate, db: Session = Depends(get_db)) -> ReviewOut:
+    candidate = db.scalar(select(Candidate).where(Candidate.candidate_id == payload.candidate_id))
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    duplicate = db.scalar(select(Review).where(Review.candidate_id == candidate.id, Review.scheduled_at == payload.scheduled_at))
+    if duplicate:
+        raise HTTPException(409, "This candidate already has a review at that time")
+    review = Review(candidate=candidate, scheduled_at=payload.scheduled_at, reviewer=payload.reviewer)
+    db.add(review); db.commit(); db.refresh(review)
+    return ReviewOut(id=review.id, candidate_id=candidate.candidate_id, full_name=candidate.full_name, project=candidate.project.name, scheduled_at=review.scheduled_at, status=review.status, reviewer=review.reviewer, meeting_link=review.meeting_link, feedback_status=review.feedback_status)
 
 @app.get("/api/projects", response_model=list[ProjectOut])
 def projects(db: Session = Depends(get_db)) -> list[ProjectOut]:
